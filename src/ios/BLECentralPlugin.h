@@ -25,8 +25,10 @@
 #import "CBPeripheral+Extensions.h"
 
 @interface BLECentralPlugin : CDVPlugin <CBCentralManagerDelegate, CBPeripheralDelegate> {
-    NSString* discoverPeripheralCallbackId;
+    NSString* discoverPeripherialCallbackId;
     NSString* stateCallbackId;
+    NSMutableDictionary* connectingDevices;
+    NSMutableDictionary* connectCallbacksAfterDelay;
     NSMutableDictionary* connectCallbacks;
     NSMutableDictionary *readCallbacks;
     NSMutableDictionary *writeCallbacks;

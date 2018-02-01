@@ -39,8 +39,12 @@
     [super pluginInitialize];
 
     peripherals = [NSMutableSet set];
-    manager = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
+    
+    NSDictionary *options = @{CBCentralManagerOptionShowPowerAlertKey : @NO};
+    manager = [[CBCentralManager alloc] initWithDelegate:self queue:nil options: options];
 
+    connectingDevices = [NSMutableDictionary new];
+    connectCallbacksAfterDelay = [NSMutableDictionary new];
     connectCallbacks = [NSMutableDictionary new];
     connectCallbackLatches = [NSMutableDictionary new];
     readCallbacks = [NSMutableDictionary new];
@@ -68,10 +72,19 @@
     CBPeripheral *peripheral = [self findPeripheralByUUID:uuid];
 
     if (peripheral) {
+        
         NSLog(@"Connecting to peripheral with UUID : %@", uuid);
-
+        
+        if ([connectCallbacksAfterDelay objectForKey:uuid]) {
+             [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(disconnectAfterDelay:) object:nil];
+        }
+        
         [connectCallbacks setObject:[command.callbackId copy] forKey:[peripheral uuidAsString]];
         [manager connectPeripheral:peripheral options:nil];
+        
+        [connectCallbacksAfterDelay setObject:uuid forKey:uuid];
+        [self performSelector:@selector(disconnectAfterDelay:) withObject:command afterDelay:10];
+        [connectingDevices setObject:peripheral forKey:uuid];
 
     } else {
         NSString *error = [NSString stringWithFormat:@"Could not find peripheral %@.", uuid];
@@ -83,15 +96,42 @@
 
 }
 
+- (void)disconnectAfterDelay:(CDVInvokedUrlCommand*)command {
+    
+     NSString *uuid = [command.arguments objectAtIndex:0];
+     CBPeripheral *peripheral = [self findPeripheralByUUID:uuid];
+    
+     [connectCallbacksAfterDelay removeObjectForKey:uuid];
+    
+    if (peripheral && peripheral.state != CBPeripheralStateConnected) {
+        [connectCallbacks removeObjectForKey:uuid];
+        
+        [manager cancelPeripheralConnection:peripheral];
+        [connectingDevices removeObjectForKey:uuid];
+        
+        NSString *error = [NSString stringWithFormat:@"Could not connect to peripheral %@.", uuid];
+        NSLog(@"%@", error);
+        CDVPluginResult *pluginResult = nil;
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    
+    }
+}
+
 // disconnect: function (device_id, success, failure) {
 - (void)disconnect:(CDVInvokedUrlCommand*)command {
+    
     NSLog(@"disconnect");
 
     NSString *uuid = [command.arguments objectAtIndex:0];
     CBPeripheral *peripheral = [self findPeripheralByUUID:uuid];
+    
+    if ([connectingDevices objectForKey:uuid]) {
+        return;
+    }
 
     [connectCallbacks removeObjectForKey:uuid];
-
+    
     if (peripheral && peripheral.state != CBPeripheralStateDisconnected) {
         [manager cancelPeripheralConnection:peripheral];
     }
@@ -186,7 +226,6 @@
         NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
         NSString *callback = [command.callbackId copy];
         [notificationCallbacks setObject: callback forKey: key];
-        [stopNotificationCallbacks removeObjectForKey:key];
 
         [peripheral setNotifyValue:YES forCharacteristic:characteristic];
 
@@ -233,7 +272,7 @@
 - (void)scan:(CDVInvokedUrlCommand*)command {
 
     NSLog(@"scan");
-    discoverPeripheralCallbackId = [command.callbackId copy];
+    discoverPeripherialCallbackId = [command.callbackId copy];
 
     NSArray *serviceUUIDStrings = [command.arguments objectAtIndex:0];
     NSNumber *timeoutSeconds = [command.arguments objectAtIndex:1];
@@ -257,7 +296,7 @@
 - (void)startScan:(CDVInvokedUrlCommand*)command {
 
     NSLog(@"startScan");
-    discoverPeripheralCallbackId = [command.callbackId copy];
+    discoverPeripherialCallbackId = [command.callbackId copy];
     NSArray *serviceUUIDStrings = [command.arguments objectAtIndex:0];
     NSMutableArray *serviceUUIDs = [NSMutableArray new];
 
@@ -272,7 +311,7 @@
 
 - (void)startScanWithOptions:(CDVInvokedUrlCommand*)command {
     NSLog(@"startScanWithOptions");
-    discoverPeripheralCallbackId = [command.callbackId copy];
+    discoverPeripherialCallbackId = [command.callbackId copy];
     NSArray *serviceUUIDStrings = [command.arguments objectAtIndex:0];
     NSMutableArray *serviceUUIDs = [NSMutableArray new];
     NSDictionary *options = command.arguments[1];
@@ -298,8 +337,8 @@
 
     [manager stopScan];
 
-    if (discoverPeripheralCallbackId) {
-        discoverPeripheralCallbackId = nil;
+    if (discoverPeripherialCallbackId) {
+        discoverPeripherialCallbackId = nil;
     }
 
     CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
@@ -330,7 +369,7 @@
         NSString *state = [bluetoothStates objectForKey:[NSNumber numberWithInt:bluetoothState]];
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:state];
         [pluginResult setKeepCallbackAsBool:TRUE];
-        NSLog(@"Start state notifications on callback %@", stateCallbackId);
+        //NSLog(@"Start state notifications on callback %@", stateCallbackId);
     } else {
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"State callback already registered"];
     }
@@ -381,8 +420,8 @@
 
     [manager stopScan];
 
-    if (discoverPeripheralCallbackId) {
-        discoverPeripheralCallbackId = nil;
+    if (discoverPeripherialCallbackId) {
+        discoverPeripherialCallbackId = nil;
     }
 }
 
@@ -393,12 +432,12 @@
     [peripherals addObject:peripheral];
     [peripheral setAdvertisementData:advertisementData RSSI:RSSI];
 
-    if (discoverPeripheralCallbackId) {
+    if (discoverPeripherialCallbackId) {
         CDVPluginResult *pluginResult = nil;
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:[peripheral asDictionary]];
-        NSLog(@"Discovered %@", [peripheral asDictionary]);
+       // NSLog(@"Discovered %@", [peripheral asDictionary]);
         [pluginResult setKeepCallbackAsBool:TRUE];
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:discoverPeripheralCallbackId];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:discoverPeripherialCallbackId];
     }
 
 }
@@ -439,6 +478,7 @@
 
     // NOTE: it's inefficient to discover all services
     [peripheral discoverServices:nil];
+    [connectingDevices removeObjectForKey:[peripheral uuidAsString]];
 
     // NOTE: not calling connect success until characteristics are discovered
 }
@@ -451,6 +491,8 @@
     [connectCallbacks removeObjectForKey:[peripheral uuidAsString]];
 
     if (connectCallbackId) {
+        
+        [connectingDevices removeObjectForKey:[peripheral uuidAsString]];
 
         NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithDictionary:[peripheral asDictionary]];
 
@@ -477,7 +519,8 @@
 
     NSString *connectCallbackId = [connectCallbacks valueForKey:[peripheral uuidAsString]];
     [connectCallbacks removeObjectForKey:[peripheral uuidAsString]];
-
+    [connectingDevices removeObjectForKey:[peripheral uuidAsString]];
+    
     CDVPluginResult *pluginResult = nil;
     pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsDictionary:[peripheral asDictionary]];
     [self.commandDelegate sendPluginResult:pluginResult callbackId:connectCallbackId];
@@ -520,9 +563,9 @@
         [connectCallbackLatches removeObjectForKey:peripheralUUIDString];
     }
 
-    NSLog(@"Found characteristics for service %@", service);
+   // NSLog(@"Found characteristics for service %@", service);
     for (CBCharacteristic *characteristic in service.characteristics) {
-        NSLog(@"Characteristic %@", characteristic);
+       // NSLog(@"Characteristic %@", characteristic);
     }
 
 }
@@ -535,15 +578,13 @@
 
     if (notifyCallbackId) {
         NSData *data = characteristic.value; // send RAW data to Javascript
-
-        CDVPluginResult *pluginResult = nil;
-        if (error) {
-            NSLog(@"%@", error);
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[error localizedDescription]];
-        } else {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArrayBuffer:data];
+        
+        if (!data) {
+             NSLog(@"CHTO ZA PIZDEC - NOTIFY");
+            return;
         }
-
+        CDVPluginResult *pluginResult = nil;
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArrayBuffer:data];
         [pluginResult setKeepCallbackAsBool:TRUE]; // keep for notification
         [self.commandDelegate sendPluginResult:pluginResult callbackId:notifyCallbackId];
     }
@@ -552,15 +593,13 @@
 
     if(readCallbackId) {
         NSData *data = characteristic.value; // send RAW data to Javascript
-        CDVPluginResult *pluginResult = nil;
-        
-        if (error) {
-            NSLog(@"%@", error);
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[error localizedDescription]];
-        } else {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArrayBuffer:data];
+
+        if (!data) {
+              NSLog(@"CHTO ZA PIZDEC - READ");
+            return;
         }
-        
+        CDVPluginResult *pluginResult = nil;
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArrayBuffer:data];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:readCallbackId];
 
         [readCallbacks removeObjectForKey:key];
@@ -578,7 +617,7 @@
     // we always call the stopNotificationCallbackId if we have a callback
     // we only call the notificationCallbackId on errors and if there is no stopNotificationCallbackId
 
-    if (stopNotificationCallbackId) {
+    if (!characteristic.isNotifying && stopNotificationCallbackId) {
 
         if (error) {
             NSLog(@"%@", error);
@@ -681,7 +720,7 @@
 // Find a characteristic in service with a specific property
 -(CBCharacteristic *) findCharacteristicFromUUID:(CBUUID *)UUID service:(CBService*)service prop:(CBCharacteristicProperties)prop
 {
-    NSLog(@"Looking for %@ with properties %lu", UUID, (unsigned long)prop);
+    //NSLog(@"Looking for %@ with properties %lu", UUID, (unsigned long)prop);
     for(int i=0; i < service.characteristics.count; i++)
     {
         CBCharacteristic *c = [service.characteristics objectAtIndex:i];
@@ -695,7 +734,7 @@
 // Find a characteristic in service by UUID
 -(CBCharacteristic *) findCharacteristicFromUUID:(CBUUID *)UUID service:(CBService*)service
 {
-    NSLog(@"Looking for %@", UUID);
+ //   NSLog(@"Looking for %@", UUID);
     for(int i=0; i < service.characteristics.count; i++)
     {
         CBCharacteristic *c = [service.characteristics objectAtIndex:i];
@@ -737,9 +776,9 @@
 
     if (!peripheral) {
 
-        NSLog(@"Could not find peripheral with UUID %@", deviceUUIDString);
+        NSLog(@"Could not find peripherial with UUID %@", deviceUUIDString);
 
-        NSString *errorMessage = [NSString stringWithFormat:@"Could not find peripheral with UUID %@", deviceUUIDString];
+        NSString *errorMessage = [NSString stringWithFormat:@"Could not find peripherial with UUID %@", deviceUUIDString];
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:errorMessage];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
 
@@ -803,7 +842,7 @@
 }
 
 -(NSString *) keyForPeripheral: (CBPeripheral *)peripheral andCharacteristic:(CBCharacteristic *)characteristic {
-    return [NSString stringWithFormat:@"%@|%@|%@", [peripheral uuidAsString], [characteristic.service UUID], [characteristic UUID]];
+    return [NSString stringWithFormat:@"%@|%@", [peripheral uuidAsString], [characteristic UUID]];
 }
 
 #pragma mark - util

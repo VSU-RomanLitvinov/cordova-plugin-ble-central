@@ -336,10 +336,12 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         this.stateReceiver = null;
     }
 
-    private void connect(CallbackContext callbackContext, String macAddress) {
-        Peripheral peripheral = peripherals.get(macAddress);
+    private void connect(final CallbackContext callbackContext, String macAddress) {
+        final Peripheral peripheral = peripherals.get(macAddress);
         if (peripheral != null) {
-            peripheral.connect(callbackContext, cordova.getActivity());
+
+                        peripheral.connect(callbackContext, cordova.getActivity());
+
         } else {
             callbackContext.error("Peripheral " + macAddress + " not found.");
         }
@@ -348,15 +350,21 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
 
     private void disconnect(CallbackContext callbackContext, String macAddress) {
 
-        Peripheral peripheral = peripherals.get(macAddress);
-        if (peripheral != null) {
-            peripheral.disconnect();
-        }
-        callbackContext.success();
+        LOG.e("TEST", "BLECentralPlugin ->disconnect for device " + macAddress);
 
+        final Peripheral peripheral = peripherals.get(macAddress);
+        if (peripheral != null) {
+
+                                peripheral.disconnect();
+
+        }
+        LOG.e("TEST", "BLECentralPlugin ->disconnect success for device" + macAddress);
+        callbackContext.success();
     }
 
     private void read(CallbackContext callbackContext, String macAddress, UUID serviceUUID, UUID characteristicUUID) {
+
+         LOG.e("TEST", "BLECentralPlugin ->read for device " + macAddress);
 
         Peripheral peripheral = peripherals.get(macAddress);
 
@@ -483,12 +491,12 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
 
         discoverCallback = callbackContext;
 
-        if (serviceUUIDs != null && serviceUUIDs.length > 0) {
+        if (serviceUUIDs.length > 0) {
             bluetoothAdapter.startLeScan(serviceUUIDs, this);
         } else {
             bluetoothAdapter.startLeScan(this);
         }
-        
+
         if (scanSeconds > 0) {
             Handler handler = new Handler();
             handler.postDelayed(new Runnable() {
