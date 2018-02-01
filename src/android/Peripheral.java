@@ -27,7 +27,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import android.os.Handler;
-                         import android.os.Looper;
+import android.os.Looper;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -60,15 +60,8 @@ public class Peripheral extends BluetoothGattCallback {
 
     private Runnable timeOutCallback;
     private Runnable discoveringTimeoutCallback;
-    private Runnable readingRssiCallback;
-    private Runnable readingCallback;
-    private Runnable writeToDescriptorCallback;
-    private Runnable writingCallback;
     private boolean discovering;
     private boolean isSuccessWritingToDescriptor;
-    private boolean isSuccessReadingCommand;
-    private boolean isSuccessReadingRssiCommand;
-    private boolean isSuccessWriteCommand;
 
     public Peripheral(BluetoothDevice device, int advertisingRSSI, byte[] scanRecord) {
 
@@ -131,9 +124,8 @@ public class Peripheral extends BluetoothGattCallback {
         //connectCallback = null;
         connected = false;
         connecting = false;
-        bleProcessing = false;
-        commandQueue.clear();
 
+        try {
         if (gatt != null) {
             gatt.disconnect();
             gatt.close();
@@ -142,6 +134,10 @@ public class Peripheral extends BluetoothGattCallback {
         }
         else {
             LOG.d("TEST", "disconnect gatt is null");
+        }
+        }
+        catch (NullPointerException exp) {
+            LOG.d("TEST", "NullPointerException: " + exp.getStackTrace());
         }
     }
 
@@ -346,7 +342,6 @@ public class Peripheral extends BluetoothGattCallback {
         super.onCharacteristicRead(gatt, characteristic, status);
         LOG.d(TAG, "onCharacteristicRead " + characteristic);
 
-        isSuccessReadingCommand = true;
         LOG.d("TEST", "onCharacteristicRead " + characteristic);
 
         if (readCallback != null) {
@@ -368,9 +363,9 @@ public class Peripheral extends BluetoothGattCallback {
 
     @Override
     public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-        isSuccessWriteCommand = true;
         super.onCharacteristicWrite(gatt, characteristic, status);
-        LOG.d("TEST", "onCharacteristicWrite " + characteristic);
+        LOG.d(TAG, "onCharacteristicWrite " + characteristic);
+
         if (writeCallback != null) {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -388,16 +383,16 @@ public class Peripheral extends BluetoothGattCallback {
     @Override
     public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
     LOG.d("TEST", "onDescriptorWrite -> start");
-        isSuccessWritingToDescriptor = true;
         super.onDescriptorWrite(gatt, descriptor, status);
-         LOG.d("TEST", "onDescriptorWrite -> finished");
+        LOG.d("TEST", "onDescriptorWrite " + descriptor);
+          isSuccessWritingToDescriptor = true;
         commandCompleted();
+         LOG.d("TEST", "onDescriptorWrite -> finished");
     }
 
 
     @Override
     public void onReadRemoteRssi(BluetoothGatt gatt, int rssi, int status) {
-        isSuccessReadingRssiCommand = true;
         super.onReadRemoteRssi(gatt, rssi, status);
         if (readCallback != null) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -423,15 +418,10 @@ public class Peripheral extends BluetoothGattCallback {
     }
 
     // This seems way too complicated
-    private void registerNotifyCallback(final CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
+    private void registerNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
          LOG.d("TEST", "registerNotifyCallback -> start");
         boolean success = false;
          isSuccessWritingToDescriptor = false;
-
-               if (writeToDescriptorCallback != null) {
-                  LOG.d("TEST", "clear writeToDescriptorCallback");
-                  TimeOutHelper.clearTimeOut(writeToDescriptorCallback);
-                }
 
         if (gatt == null) {
             callbackContext.error("BluetoothGatt is null");
@@ -462,15 +452,15 @@ public class Peripheral extends BluetoothGattCallback {
                     }
 
                     if (gatt.writeDescriptor(descriptor)) {
-                        writeToDescriptorCallback = new Runnable() {
+                        Runnable writeToDescriptorCallback = new Runnable() {
                                    @Override
                                    public void run() {
                                       LOG.d("TEST", "Inside writeToDescriptorCallback");
-                                      checkForDescriptorValue(callbackContext);
+                                      checkForDescriptorValue();
                                   };
                         };
 
-                        TimeOutHelper.setTimeout(writeToDescriptorCallback, 1500);
+                        TimeOutHelper.setTimeout(writeToDescriptorCallback, 1000);
                         LOG.d("TEST", "registerNotifyCallback -> success");
                         success = true;
                     } else {
@@ -490,39 +480,23 @@ public class Peripheral extends BluetoothGattCallback {
         }
 
         if (!success) {
-            isSuccessWritingToDescriptor = true;
             commandCompleted();
             return;
         }
 
     }
 
-    private void checkForDescriptorValue(CallbackContext callbackContext) {
+    private void checkForDescriptorValue() {
       LOG.d("TEST", "checkForDescriptorValue -> start");
       if (!isSuccessWritingToDescriptor) {
-
-          //commandCompleted();
-
-          callbackContext.error("time for notify command execution expired");
-          if (connectCallback != null) {
-             connectCallback.error(this.asJSONObject("Peripheral Disconnected after timeout"));
-          }
-          disconnect();
+          commandCompleted();
           LOG.d("TEST", "checkForDescriptorValue -> descriptor disabled, so finish notification command");
       }
       LOG.d("TEST", "checkForDescriptorValue -> finished");
     }
 
-    private void removeNotifyCallback(final CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
+    private void removeNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
         LOG.d("TEST", "removeNotifyCallback -> start");
-          boolean success = false;
-                 isSuccessWritingToDescriptor = false;
-
-                       if (writeToDescriptorCallback != null) {
-                          LOG.d("TEST", "clear writeToDescriptorCallback");
-                          TimeOutHelper.clearTimeOut(writeToDescriptorCallback);
-                        }
-
         if (gatt == null) {
             callbackContext.error("BluetoothGatt is null");
             return;
@@ -540,22 +514,7 @@ public class Peripheral extends BluetoothGattCallback {
                 BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIGURATION_UUID);
                 if (descriptor != null) {
                     descriptor.setValue(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE);
-                     if (gatt.writeDescriptor(descriptor)) {
-                     success = true;
-                                            writeToDescriptorCallback = new Runnable() {
-                                                       @Override
-                                                       public void run() {
-                                                          LOG.d("TEST", "Inside writeToDescriptorCallback");
-                                                          checkForDescriptorValue(callbackContext);
-                                                      };
-                                            };
-
-                                            TimeOutHelper.setTimeout(writeToDescriptorCallback, 1500);
-                                            LOG.d("TEST", "removeNotifyCallback -> success");
-                                            success = true;
-                                        } else {
-                                            callbackContext.error("Failed to set client characteristic notification for " + characteristicUUID);
-                                        }
+                    gatt.writeDescriptor(descriptor);
                 }
                 callbackContext.success();
             } else {
@@ -567,11 +526,7 @@ public class Peripheral extends BluetoothGattCallback {
             callbackContext.error("Characteristic " + characteristicUUID + " not found");
         }
 
-          if (!success) {
-                   isSuccessWritingToDescriptor = true;
-                   commandCompleted();
-                   return;
-               }
+        commandCompleted();
 
     }
 
@@ -608,16 +563,10 @@ public class Peripheral extends BluetoothGattCallback {
         return characteristic;
     }
 
-    private void readCharacteristic(final CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
+    private void readCharacteristic(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
 
         LOG.d("TEST", "readCharacteristic -> start");
         boolean success = false;
-        isSuccessReadingCommand = false;
-
-               if (readingCallback != null) {
-                  LOG.d("TEST", "clear readingCallback");
-                  TimeOutHelper.clearTimeOut(readingCallback);
-                }
 
         if (gatt == null) {
             callbackContext.error("BluetoothGatt is null");
@@ -634,16 +583,6 @@ public class Peripheral extends BluetoothGattCallback {
             if (gatt.readCharacteristic(characteristic)) {
                 success = true;
                 LOG.d("TEST", "readCharacteristic -> success");
-                 readingCallback = new Runnable() {
-                                                   @Override
-                                                   public void run() {
-                                                      LOG.d("TEST", "Inside readingCallback");
-                                                      checkForSuccessfulReadCommand(callbackContext);
-                                                  };
-                                        };
-
-                 TimeOutHelper.setTimeout(readingCallback, 1500);
-
             } else {
                 readCallback = null;
                 callbackContext.error("Read failed");
@@ -652,20 +591,14 @@ public class Peripheral extends BluetoothGattCallback {
 
         if (!success) {
             LOG.d("TEST", "readCharacteristic -> error");
-            isSuccessReadingCommand = true;
             commandCompleted();
         }
         LOG.d("TEST", "readCharacteristic -> finished");
     }
 
-    private void readRSSI(final CallbackContext callbackContext) {
+    private void readRSSI(CallbackContext callbackContext) {
 
         boolean success = false;
-        isSuccessReadingRssiCommand = false;
-                       if (readingRssiCallback != null) {
-                          LOG.d("TEST", "clear readingRssiCallback");
-                          TimeOutHelper.clearTimeOut(readingRssiCallback);
-                        }
 
         if (gatt == null) {
             callbackContext.error("BluetoothGatt is null");
@@ -676,57 +609,16 @@ public class Peripheral extends BluetoothGattCallback {
 
         if (gatt.readRemoteRssi()) {
             success = true;
-                 readingRssiCallback = new Runnable() {
-                                                               @Override
-                                                               public void run() {
-                                                                  LOG.d("TEST", "Inside readingRssiCallback");
-                                                                  checkForSuccessfulReadRssiCommand(callbackContext);
-                                                              };
-                                                    };
-
-                             TimeOutHelper.setTimeout(readingRssiCallback, 500);
         } else {
             readCallback = null;
             callbackContext.error("Read RSSI failed");
         }
 
         if (!success) {
-            isSuccessReadingRssiCommand = true;
             commandCompleted();
         }
 
     }
-
-        private void checkForSuccessfulReadCommand(CallbackContext callbackContext) {
-          LOG.d("TEST", "checkForSuccessfulReadCommand -> start");
-          if (!isSuccessReadingCommand) {
-
-              //commandCompleted();
-              callbackContext.error("time for read command execution expired");
-                   if (connectCallback != null) {
-                          connectCallback.error(this.asJSONObject("Peripheral Disconnected after timeout"));
-                       }
-                       disconnect();
-              LOG.d("TEST", "checkForSuccessfulReadCommand -> onReadCallback is not called");
-          }
-          LOG.d("TEST", "checkForSuccessfulReadCommand -> finished");
-        }
-
-     private void checkForSuccessfulReadRssiCommand(CallbackContext callbackContext) {
-              LOG.d("TEST", "checkForSuccessfulReadRssiCommand -> start");
-              if (!isSuccessReadingRssiCommand) {
-
-                  //commandCompleted();
-
-                  callbackContext.error("time for readRssi command execution expired");
-                              if (connectCallback != null) {
-                                     connectCallback.error(this.asJSONObject("Peripheral Disconnected after timeout"));
-                                  }
-                                  disconnect();
-                  LOG.d("TEST", "checkForSuccessfulReadRssiCommand -> onReadRssiCallback is not called");
-              }
-              LOG.d("TEST", "checkForSuccessfulReadRssiCommand -> finished");
-            }
 
     // Some peripherals re-use UUIDs for multiple characteristics so we need to check the properties
     // and UUID of all characteristics instead of using service.getCharacteristic(characteristicUUID)
@@ -751,15 +643,9 @@ public class Peripheral extends BluetoothGattCallback {
         return characteristic;
     }
 
-    private void writeCharacteristic(final CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, byte[] data, int writeType) {
-          LOG.d("TEST", "writeCharacteristic -> start" + characteristicUUID);
-        boolean success = false;
-        isSuccessWriteCommand = false;
-         if (writingCallback != null) {
-              LOG.d("TEST", "clear writingCallback");
-              TimeOutHelper.clearTimeOut(writingCallback);
-         }
+    private void writeCharacteristic(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, byte[] data, int writeType) {
 
+        boolean success = false;
 
         if (gatt == null) {
             callbackContext.error("BluetoothGatt is null");
@@ -778,15 +664,6 @@ public class Peripheral extends BluetoothGattCallback {
 
             if (gatt.writeCharacteristic(characteristic)) {
                 success = true;
-                  writingCallback = new Runnable() {
-                        @Override
-                         public void run() {
-                            LOG.d("TEST", "Inside writingCallback");
-                            checkForSuccessfulWriteCommand(callbackContext);
-                         };
-                  };
-
-                TimeOutHelper.setTimeout(writingCallback, 1500);
             } else {
                 writeCallback = null;
                 callbackContext.error("Write failed");
@@ -794,26 +671,10 @@ public class Peripheral extends BluetoothGattCallback {
         }
 
         if (!success) {
-        isSuccessWriteCommand = true;
             commandCompleted();
         }
-      LOG.d("TEST", "writeCharacteristic -> finish" + characteristicUUID);
+
     }
-
-            private void checkForSuccessfulWriteCommand(CallbackContext callbackContext) {
-              LOG.d("TEST", "checkForSuccessfulWriteCommand -> start");
-              if (!isSuccessWriteCommand) {
-
-                 // commandCompleted();
-                  callbackContext.error("time for write command execution expired");
-      if (connectCallback != null) {
-             connectCallback.error(this.asJSONObject("Peripheral Disconnected after timeout"));
-          }
-          disconnect();
-                  LOG.d("TEST", "checkForSuccessfulWriteCommand -> onWriteCallback is not called");
-              }
-              LOG.d("TEST", "checkForSuccessfulWriteCommand -> finished");
-            }
 
     // Some peripherals re-use UUIDs for multiple characteristics so we need to check the properties
     // and UUID of all characteristics instead of using service.getCharacteristic(characteristicUUID)
@@ -882,9 +743,7 @@ public class Peripheral extends BluetoothGattCallback {
 
         if (!bleProcessing) {
         LOG.d("TEST","Queuing Command -> processCommands" + command.getType());
-
-                            processCommands();
-
+            processCommands();
         }
         else {
           LOG.d("TEST","Queuing Command -> bleProcessing is true");
@@ -895,9 +754,7 @@ public class Peripheral extends BluetoothGattCallback {
     private void commandCompleted() {
         LOG.d("TEST","Processing Complete");
         bleProcessing = false;
-
-                processCommands();
-
+        processCommands();
     }
 
     // process the queue
